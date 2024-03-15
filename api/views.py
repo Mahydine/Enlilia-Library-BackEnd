@@ -1,12 +1,13 @@
 from django.shortcuts import render
 from rest_framework import generics
-from .models import Livre, Panier
-from .serializers import LivreSerializer, PanierSerializer
+from .models import Livre, Panier, LignePanier
+from .serializers import LivreSerializer, PanierSerializer, LignePanierSerializer, UserSerializer
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
 from django.contrib.auth import login
+from rest_framework.views import APIView
 import json
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -14,6 +15,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.permissions import AllowAny
+from rest_framework import permissions
 
 
 #Livres :
@@ -56,11 +58,11 @@ def inscription(request):
         password = data.get('password')
         if not User.objects.filter(username=username).exists():
             user = User.objects.create_user(username=username, password=password)
-            return JsonResponse({'message': 'Utilisateur créé avec succès'}, status=201)
+            return JsonResponse({'successMsg': 'Utilisateur créé avec succès'}, status=201)
         else:
-            return JsonResponse({'message': 'Cet utilisateur existe déjà'}, status=400)
+            return JsonResponse({'errorMsg': 'Cet utilisateur existe déjà'}, status=400)
     else:
-        return JsonResponse({'message': 'Méthode non autorisée'}, status=405)
+        return JsonResponse({'errorMsg': 'Méthode non autorisée'}, status=405)
 
 @api_view(['POST'])
 def connexion(request):
@@ -76,6 +78,13 @@ def connexion(request):
         })
     else:
         return Response({'error': 'Nom d\'utilisateur ou mot de passe incorrect'}, status=401)
+    
+class UserProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, format=None):
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data)
 
 #Paniers :
     
@@ -88,14 +97,13 @@ class getAllPaniers(generics.ListCreateAPIView): #si on utilise GET dans la requ
 @permission_classes([IsAuthenticated])
 def getUserPanier(request):
     user = request.user
-
     panier = get_object_or_404(Panier, utilisateur=user)
-    livres = panier.livres.all()
-    serializedLivres = LivreSerializer(livres, many=True).data
+    ligne_paniers = panier.ligne_paniers.all()  # Accès aux objets LignePanier liés au Panier
+    serializedLignePaniers = LignePanierSerializer(ligne_paniers, many=True).data  # Vous aurez besoin de créer ce sérialiseur
 
-    return Response({'livres': serializedLivres})
+    return Response({'livres': serializedLignePaniers})
+
     
-
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def AjouterLivreAuPanier(request):
@@ -103,13 +111,15 @@ def AjouterLivreAuPanier(request):
     livre = get_object_or_404(Livre, id=livre_id)
     user = request.user
 
-    panier, created = Panier.objects.get_or_create(utilisateur=user)
+    panier, _ = Panier.objects.get_or_create(utilisateur=user)
+    ligne_panier, created = LignePanier.objects.get_or_create(panier=panier, livre=livre)
 
-    if livre not in panier.livres.all():
-        panier.livres.add(livre)
-        return Response({'successMsg': 'Livre ajouté au panier avec succès'})
-    else:
-        return Response({'errorMsg': 'Le livre est déjà dans le panier'}, status=400)
+    if not created:
+        ligne_panier.quantite += 1
+        ligne_panier.save()
+
+    return Response({'successMsg': 'Livre ajouté au panier avec succès'})
+
     
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -118,10 +128,30 @@ def RetirerLivreDuPanier(request):
     livre = get_object_or_404(Livre, id=livre_id)
     user = request.user
 
-    panier, created = Panier.objects.get_or_create(utilisateur=user)
+    panier, _ = Panier.objects.get_or_create(utilisateur=user)
 
-    if livre in panier.livres.all():
-        panier.livres.remove(livre)
-        return Response({'message': 'Livre retiré du panier avec succès'})
+    # Essayez de trouver la ligne du panier correspondant au livre à retirer
+    try:
+        ligne_panier = LignePanier.objects.get(panier=panier, livre=livre)
+        ligne_panier.delete()  # Supprimez cette ligne du panier, retirant ainsi le livre peu importe la quantité
+        return Response({'successMsg': 'Livre retiré du panier avec succès'})
+    except LignePanier.DoesNotExist:
+        return Response({'errorMsg': 'Le livre n\'est pas dans le panier'}, status=400)
+
+    
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def AlreadyInPanier(request):
+    livre_id = request.data.get('livre_id')
+    user = request.user
+
+    # Vérifiez si un Panier existe pour cet utilisateur et contient le livre spécifié.
+    panier = Panier.objects.filter(utilisateur=user).first()
+    
+    if panier:
+        # Utilisez le modèle LignePanier pour vérifier si le livre est déjà dans le panier.
+        is_already_in_panier = LignePanier.objects.filter(panier=panier, livre__id=livre_id).exists()
     else:
-        return Response({'message': 'Le livre n\'est pas dans le panier'}, status=400)
+        is_already_in_panier = False
+
+    return Response({'alreadyInPanier': is_already_in_panier})

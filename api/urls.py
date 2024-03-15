@@ -15,11 +15,13 @@ urlpatterns = [
     path('panier/', views.getUserPanier, name='getUserPanier'),
     path('panier/ajouter/', views.AjouterLivreAuPanier, name='AjouterLivreAuPanier'),
     path('panier/retirer/', views.RetirerLivreDuPanier, name='RetirerLivreDuPanier'),
+    path('panier/alreadyInPanier/', views.AlreadyInPanier, name='AlreadyInPanier'),
 
     # auth routes
     path('islogged/', views.isLogged, name='isLogged'),
     path('inscription/', views.inscription, name='inscription'),
     path('connexion/', views.connexion, name='connexion'),
+    path('user/profile/', views.UserProfileView.as_view(), name='user-profile'),
 
     #JWT
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
